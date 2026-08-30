@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/indraq-logo.png" alt="IndraQ Innovations" width="620" />
+  <img src="https://raw.githubusercontent.com/IndraQ-Innovations/IndraQ_CLI_code/main/docs/assets/indraq-logo.png?token=GHSAT0AAAAAADHFOTAN74I3366ZBTQUDSEY2UT4KVQ" alt="IndraQ Innovations" width="620" />
 </p>
 
 <h1 align="center">IndraQ CLI</h1>
@@ -1088,7 +1088,7 @@ One IndraQ CLI
 ---
 
 <p align="center">
-  <img src="docs/assets/indraq-mark.png" alt="IndraQ" width="72" />
+  <img src="https://raw.githubusercontent.com/IndraQ-Innovations/IndraQ_CLI_code/main/docs/assets/indraq-logo.png?token=GHSAT0AAAAAADHFOTAN74I3366ZBTQUDSEY2UT4KVQ" alt="IndraQ" width="72" />
 </p>
 
 <p align="center">
