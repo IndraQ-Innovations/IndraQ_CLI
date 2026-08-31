@@ -18,7 +18,7 @@
   <img alt="Java 21" src="https://img.shields.io/badge/Java-21%20recommended-ED8B00?logo=openjdk&logoColor=white" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
   <img alt="License" src="https://img.shields.io/npm/l/indraq_cli" />
-  <img alt="Version" src="https://img.shields.io/badge/version-1.5.7-264B63" />
+  <img alt="Version" src="https://img.shields.io/badge/version-1.5.8-264B63" />
 </p>
 
 > [!IMPORTANT]
@@ -30,7 +30,7 @@
 
 1. [What is IndraQ CLI?](#what-is-indraq-cli)
 2. [Explain it like I am new](#explain-it-like-i-am-new)
-3. [What changed in v1.5.7?](#what-changed-in-v155)
+3. [What changed in v1.5.8?](#what-changed-in-v158)
 4. [Requirements](#requirements)
 5. [Install Java 21](#install-java-21)
 6. [Install IndraQ CLI](#install-indraq-cli)
@@ -59,11 +59,23 @@
 
 ---
 
-## v1.5.7 — GHCR credential safety
+## v1.5.8 — Git-safe shared configuration
 
-Docker deployments now use the GHCR login already stored by Docker. IndraQ **never runs `docker login ghcr.io` during deploy** and never substitutes a Git/Git Credential Manager token for Docker's registry credential.
+Project configuration is now intentionally shareable without exposing Jenkins credentials:
 
-This distinction matters: a credential that can clone/push a GitHub repository does not automatically have GHCR `write:packages` permission. If `docker push ghcr.io/...` works manually, `indraq deploy:dev` / `indraq deploy:prod` now uses that same Docker credential state.
+```text
+COMMIT / SHARE
+.indraq/jenkins.json
+.indraq/docker.json
+.indraq/mobile.json
+
+LOCAL ONLY / IGNORE
+.indraq/jenkins.local.json
+```
+
+IndraQ reuses an existing project `.gitignore`, adds `.indraq/jenkins.local.json` only when the exact rule is missing, and does not add an ignore-all `.indraq/` rule. Re-running configuration is idempotent, so the same ignore entry is never appended repeatedly. Actual Jenkins username/token/password data stays outside the repository under the user's home directory.
+
+Docker deployments also continue to preserve Docker's existing GHCR credential store; IndraQ does not run `docker login ghcr.io` during deployment.
 
 ---
 
@@ -153,19 +165,27 @@ You do **not** need to give Jenkins a Git URL, Git branch, app subdirectory, or 
 
 ---
 
-## What changed in v1.5.7?
+## What changed in v1.5.8?
 
-v1.5.7 keeps the Android versioning and Jenkins/Git workflow from v1.5.x and hardens Android builds created from Windows source snapshots.
+v1.5.8 keeps the working Jenkins, mobile-build, GHCR, and complete-help behavior from v1.5.7 and tightens project configuration sharing.
 
-This patch fixes the mobile Jenkinsfile Groovy escaping error, makes the mobile Jenkins job name deterministic, makes project configuration Git-shareable, keeps Jenkins login credentials machine-local, and makes Docker deployments send the exact manual deployment parameters expected by the Jenkins pipeline.
+### Git-safe project configuration in v1.5.8
+
+- IndraQ no longer adds `.indraq/` to the project `.gitignore`.
+- Only `.indraq/jenkins.local.json` is added at the project root as the machine-local Jenkins binding.
+- Existing `.gitignore` files are reused rather than replaced.
+- Existing exact ignore entries are detected, so repeated configuration does not duplicate them.
+- `.indraq/jenkins.json`, `.indraq/docker.json`, and `.indraq/mobile.json` remain available to Git and can be shared with another developer.
+- Jenkins username/token/password remain outside the repo under `~/.indraq/jenkins/...`; another developer receives server/config metadata but not your login credential.
+- Known old IndraQ-generated ignore-all rules are migrated carefully; unrelated user-authored Git rules are preserved.
 
 
-### Jenkins-console-quality logs and server Gradle reuse in v1.5.7
+### Jenkins-console-quality logs and server Gradle reuse in v1.5.8
 
 - The terminal log streamer now reads Jenkins **`logText/progressiveHtml`**, the same progressive endpoint used by the classic Jenkins web console. Jenkins therefore removes/renders hidden `ConsoleNote` annotations before the CLI displays the text, so internal `ha:////...` payloads no longer pollute VS Code output.
 - HTML markup is converted back to plain terminal text while preserving usernames, timestamps, Pipeline lines, errors, and normal line spacing. `progressiveText` remains only as a compatibility fallback with explicit ConsoleNote filtering.
 - Failed mobile builds now end with a short **Key Jenkins error lines** summary plus the direct Jenkins build URL.
-- The mobile Jenkinsfile still normalizes Windows CRLF in `android/gradlew`, but v1.5.7 also restores the Jenkins server's shared Gradle cache at `$HOME/.gradle` instead of creating an empty per-project Gradle cache.
+- The mobile Jenkinsfile still normalizes Windows CRLF in `android/gradlew`, but v1.5.8 also restores the Jenkins server's shared Gradle cache at `$HOME/.gradle` instead of creating an empty per-project Gradle cache.
 - Gradle execution prefers the exact cached project-wrapper distribution. If no exact wrapper distribution is cached, an installed Jenkins-server Gradle from the same major version can be reused. The project wrapper remains the final fallback.
 - If a wrapper download is genuinely necessary, the temporary Jenkins copy of `gradle-wrapper.properties` gets `networkTimeout=120000` (120 seconds) instead of failing at Gradle's short default timeout.
 - `FULL_RESET` no longer deletes Jenkins' shared Gradle cache. It clears project-local npm/Expo caches and generated Android state only.
@@ -276,7 +296,7 @@ Existing `.indraq/mobile.json` files are upgraded automatically. Project type, a
 | **Jenkins account** | Starts Jenkins jobs | Jenkins username + API token |
 
 > [!TIP]
-> Node.js **24** is recommended for IndraQ developer machines, but v1.5.7 supports Node.js **22 and newer**.
+> Node.js **24** is recommended for IndraQ developer machines, but v1.5.8 supports Node.js **22 and newer**.
 
 ### Jenkins mobile build machine
 
@@ -866,7 +886,7 @@ indraq build mobile:prod --output aab --profile clean --verbose --yes
 
 ## Android versioning and artifact names
 
-IndraQ v1.5.7 currently manages **Android** versioning only. iOS version/build-number management is intentionally out of scope for now.
+IndraQ v1.5.8 currently manages **Android** versioning only. iOS version/build-number management is intentionally out of scope for now.
 
 ### What value does a build use?
 
@@ -1119,7 +1139,7 @@ Project-local configuration:
 The generated `.indraq/.gitignore` ignores **only machine-local files** such as `jenkins.local.json`. Shared project configuration is intentionally visible to Git.
 
 > [!IMPORTANT]
-> Older IndraQ setups often ignored the whole `.indraq/` directory. v1.5.7 automatically appends safe re-include rules to the project root `.gitignore` so `jenkins.json`, `docker.json`, and `mobile.json` can be committed while `jenkins.local.json` remains ignored. Run `git status` after configuration and commit the three shared JSON files.
+> v1.5.8 never adds `.indraq/` as an ignore-all rule. If a project already has a root `.gitignore`, IndraQ reuses that same file and adds `.indraq/jenkins.local.json` only when that exact rule is missing. Re-running `indraq configure` does not duplicate the entry. Known ignore-all rules created by older IndraQ versions are migrated while unrelated user ignore rules are preserved.
 
 ### `jenkins.json`
 
@@ -1205,7 +1225,7 @@ Expected for this release:
 1.5.3
 ```
 
-v1.5.7 automatically migrates older `.indraq/mobile.json` and Jenkins config layouts. Existing mobile environment/version settings are preserved. Older Jenkins username/server binding fields are split so only non-secret server metadata remains in tracked `jenkins.json`; the current machine binding is written to ignored `jenkins.local.json`.
+v1.5.8 automatically migrates older `.indraq/mobile.json` and Jenkins config layouts. Existing mobile environment/version settings are preserved. Older Jenkins username/server binding fields are split so only non-secret server metadata remains in tracked `jenkins.json`; the current machine binding is written to ignored `jenkins.local.json`.
 
 For projects coming from pre-versioning releases, Android version settings initialize as:
 
@@ -1391,7 +1411,7 @@ Do not paste it into Jenkins.
 Make sure:
 
 1. Jenkins **File Parameter** plugin is installed;
-2. the job uses `templates/jenkins/Jenkinsfile-Mobile-App` from v1.5.7;
+2. the job uses `templates/jenkins/Jenkinsfile-Mobile-App` from v1.5.8;
 3. Jenkins has registered the parameters;
 4. the Jenkins job is named exactly `Mobile app Cli build`.
 
@@ -1459,15 +1479,15 @@ This restores the shared Gradle-cache behavior used by the earlier Git-checkout 
 
 ### Gradle wrapper tries to download and times out
 
-v1.5.7 first checks the Jenkins server's shared wrapper cache. If the requested distribution is already cached, the wrapper uses it without internet access. If there is no exact cached wrapper but Jenkins has a system Gradle from the same major version, IndraQ reuses the server Gradle. Only when neither option exists does the project wrapper attempt a download, with `networkTimeout=120000` applied to the temporary Jenkins copy of `gradle-wrapper.properties`.
+v1.5.8 first checks the Jenkins server's shared wrapper cache. If the requested distribution is already cached, the wrapper uses it without internet access. If there is no exact cached wrapper but Jenkins has a system Gradle from the same major version, IndraQ reuses the server Gradle. Only when neither option exists does the project wrapper attempt a download, with `networkTimeout=120000` applied to the temporary Jenkins copy of `gradle-wrapper.properties`.
 
 If the Jenkins machine has neither a compatible installed Gradle nor the requested wrapper cached and it has no outbound access to Gradle distributions, install/cache the required Gradle version on that Jenkins machine once.
 
 ### Jenkins logs contain `ha:////...`, look diagonal, or are unreadable in VS Code
 
-The `ha:////...` strings are Jenkins `ConsoleNote` annotations embedded in raw `progressiveText`. The Jenkins browser UI renders/hides those annotations. v1.5.7 now consumes Jenkins `logText/progressiveHtml`—the same progressive endpoint used by the classic web console—and converts the rendered output back to plain terminal text.
+The `ha:////...` strings are Jenkins `ConsoleNote` annotations embedded in raw `progressiveText`. The Jenkins browser UI renders/hides those annotations. v1.5.8 now consumes Jenkins `logText/progressiveHtml`—the same progressive endpoint used by the classic web console—and converts the rendered output back to plain terminal text.
 
-The CLI also normalizes line endings and strips terminal control sequences. Upgrade to v1.5.7 or newer if you see raw `ha:////...` payloads or staircase/right-shifted output.
+The CLI also normalizes line endings and strips terminal control sequences. Upgrade to v1.5.8 or newer if you see raw `ha:////...` payloads or staircase/right-shifted output.
 
 ---
 
@@ -1636,7 +1656,7 @@ indraq diagnostics ...
 - [ ] command is run from package.json root
 - [ ] Production Jenkins connection configured (`indraq configure → Jenkins → Production`)
 - [ ] Jenkins File Parameter plugin installed
-- [ ] Jenkins job uses the v1.5.7 mobile Jenkinsfile
+- [ ] Jenkins job uses the v1.5.8 mobile Jenkinsfile
 - [ ] Mobile project type configured
 - [ ] Jenkins job is named exactly `Mobile app Cli build` and exists on Production Jenkins
 - [ ] Development / Staging / Production defaults configured as needed
@@ -1661,6 +1681,6 @@ MIT License. See [`LICENSE`](LICENSE).
 
 ### Jenkins mobile upload returns HTTP 403
 
-IndraQ CLI v1.5.7 preserves the Jenkins web-session cookie together with the CSRF crumb when a Jenkins username/password is used. Jenkins ties crumbs to the session that created them, so both values must travel together. API-token authentication is exempt from the crumb requirement.
+IndraQ CLI v1.5.8 preserves the Jenkins web-session cookie together with the CSRF crumb when a Jenkins username/password is used. Jenkins ties crumbs to the session that created them, so both values must travel together. API-token authentication is exempt from the crumb requirement.
 
-If a mobile build still returns HTTP 403, v1.5.7 prints Jenkins' own response message. A permission error means the configured Jenkins user needs **Job/Read** and **Job/Build** on the `Mobile app Cli build` job. A CSRF error means the Jenkins controller or reverse proxy is rejecting the crumb/session and the printed Jenkins message should be used for diagnosis.
+If a mobile build still returns HTTP 403, v1.5.8 prints Jenkins' own response message. A permission error means the configured Jenkins user needs **Job/Read** and **Job/Build** on the `Mobile app Cli build` job. A CSRF error means the Jenkins controller or reverse proxy is rejecting the crumb/session and the printed Jenkins message should be used for diagnosis.
