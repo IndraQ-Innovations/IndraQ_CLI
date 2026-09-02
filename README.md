@@ -1,1686 +1,891 @@
-<p align="center">
-  <img src="docs/assets/indraq-logo.png" alt="IndraQ Innovations" width="620" />
-</p>
+# IndraQ CLI
 
-<h1 align="center">IndraQ CLI</h1>
+**One CLI for project setup, shared infrastructure, access control, Jenkins, AWS Route53, Nginx Proxy Manager, GHCR, Docker and deployments.**
 
-<p align="center">
-  <strong>One command-line tool for IndraQ engineering operations.</strong>
-</p>
+> This guide matches **IndraQ CLI v1.9.1**.
 
-<p align="center">
-  Docker & GHCR deployments · Jenkins automation · Expo / React Native Android builds · Live terminal logs
-</p>
+**Jump to:** [Quick start](#quick-start) · [Recommended workflow](#recommended-workflow-in-chronological-order) · [Command reference](#command-reference) · [Common flows](#common-real-world-flows) · [Security](#security-model) · [Troubleshooting](#troubleshooting)
 
-<p align="center">
-  <img alt="npm" src="https://img.shields.io/npm/v/indraq_cli?logo=npm&label=npm" />
-  <img alt="Node 22+" src="https://img.shields.io/badge/Node.js-22%2B-339933?logo=node.js&logoColor=white" />
-  <img alt="Java 21" src="https://img.shields.io/badge/Java-21%20recommended-ED8B00?logo=openjdk&logoColor=white" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
-  <img alt="License" src="https://img.shields.io/npm/l/indraq_cli" />
-  <img alt="Version" src="https://img.shields.io/badge/version-1.5.8-264B63" />
-</p>
+IndraQ CLI is built to remove the repetitive DevOps work developers normally have to remember or perform manually. Instead of opening Jenkins, AWS, Nginx Proxy Manager and multiple configuration files for every project, you use one consistent CLI from your terminal.
 
-> [!IMPORTANT]
-> **IndraQ CLI is an engineering operations CLI created by IndraQ Innovations.** It is publicly installable from npm. The tool is designed so new internal capabilities can be added as separate modules instead of growing into one giant script.
-
----
-
-## Index
-
-1. [What is IndraQ CLI?](#what-is-indraq-cli)
-2. [Explain it like I am new](#explain-it-like-i-am-new)
-3. [What changed in v1.5.8?](#what-changed-in-v158)
-4. [Requirements](#requirements)
-5. [Install Java 21](#install-java-21)
-6. [Install IndraQ CLI](#install-indraq-cli)
-7. [Run the doctor](#run-the-doctor)
-8. [Configuration home](#configuration-home)
-9. [Configure Jenkins](#configure-jenkins)
-10. [Configure Docker / GHCR](#configure-docker--ghcr)
-11. [Configure Mobile App](#configure-mobile-app)
-12. [Docker deployment](#docker-deployment)
-13. [Mobile build overview](#mobile-build-overview)
-14. [Mobile build matrix](#mobile-build-matrix)
-15. [Mobile build commands](#mobile-build-commands)
-16. [Mobile build flags](#mobile-build-flags)
-17. [Android versioning and artifact names](#android-versioning-and-artifact-names)
-18. [How local source reaches Jenkins](#how-local-source-reaches-jenkins)
-19. [Root .env behavior](#root-env-behavior)
-20. [Mobile Jenkins setup](#mobile-jenkins-setup)
-21. [Configuration and secret storage](#configuration-and-secret-storage)
-22. [Upgrade from v1.4 / v1.5](#upgrade-from-v14--v15)
-23. [Command reference](#command-reference)
-24. [Troubleshooting](#troubleshooting)
-25. [Frequently asked questions](#frequently-asked-questions)
-26. [Project architecture](#project-architecture)
-27. [Final checklist](#final-checklist)
-28. [License](#license)
-
----
-
-## v1.5.8 — Git-safe shared configuration
-
-Project configuration is now intentionally shareable without exposing Jenkins credentials:
+A developer can go from a project folder to a deployment with a workflow such as:
 
 ```text
-COMMIT / SHARE
-.indraq/jenkins.json
-.indraq/docker.json
-.indraq/mobile.json
-
-LOCAL ONLY / IGNORE
-.indraq/jenkins.local.json
+login
+  ↓
+configure reusable credentials once
+  ↓
+init / register / link a project
+  ↓
+prebuild infrastructure
+  ↓
+deploy
 ```
 
-IndraQ reuses an existing project `.gitignore`, adds `.indraq/jenkins.local.json` only when the exact rule is missing, and does not add an ignore-all `.indraq/` rule. Re-running configuration is idempotent, so the same ignore entry is never appended repeatedly. Actual Jenkins username/token/password data stays outside the repository under the user's home directory.
-
-Docker deployments also continue to preserve Docker's existing GHCR credential store; IndraQ does not run `docker login ghcr.io` during deployment.
+The CLI keeps **user credentials** separate from **project infrastructure**, so the same AWS, Jenkins, NPM and GHCR credentials can be reused across every project the user is allowed to access.
 
 ---
 
-## What is IndraQ CLI?
+## Why use IndraQ?
 
-IndraQ CLI is a program you install once on a developer computer and then use from **any project folder**.
+| Problem without IndraQ | What IndraQ does |
+| --- | --- |
+| Developers remember IPs, ports, Jenkins jobs and registry paths | Uses named environments and stored project associations |
+| Provider credentials are copied between projects | Stores reusable credentials once in IndraQ Cloud |
+| New projects need repetitive folder, Docker and environment setup | `indraq init` scaffolds the project safely |
+| DNS, proxy and Jenkins setup drift apart | `indraq prebuild` reconciles them as one workflow |
+| User access has to be changed in several systems | Unified user create/update/delete synchronizes providers |
+| Jenkins jobs require opening the browser and remembering parameters | CLI can discover, prompt for and run any visible pipeline |
+| AWS keys are difficult to recover or rotate safely | IndraQ can store managed IAM credentials encrypted and rotate them |
+| Nobody knows who changed infrastructure | Manager/admin operations are audited in IndraQ Cloud |
 
-Instead of remembering many Docker, GitHub, Jenkins, Android, and build commands, you run a small IndraQ command such as:
+The result is not just fewer commands. The important benefit is **repeatability**: two developers following the same IndraQ workflow should reach the same infrastructure state without having to know every provider-specific detail.
 
-```bash
-indraq deploy:dev
+---
+
+## The mental model
+
+IndraQ is easier to understand if you remember three things.
+
+### 1. Your reusable provider credentials
+
+Each IndraQ user can store their own credentials for:
+
+- AWS
+- Nginx Proxy Manager (NPM)
+- Jenkins Development
+- Jenkins Production
+- GitHub Container Registry (GHCR)
+
+They are stored in IndraQ Cloud and reused across projects. They are not copied into every repository.
+
+### 2. Shared environments
+
+Admins can define friendly environment names that point to server targets, for example:
+
+```text
+production        → 10.0.0.10
+production-backup → 10.0.0.11
+staging           → 10.0.1.10
+qa                → 10.0.2.20
 ```
 
-or:
+Developers select `production` or `staging` instead of remembering the IP address.
 
-```bash
-indraq build mobile:staging
+### 3. Project infrastructure
+
+A Cloud project can remember associations such as:
+
+```text
+Project
+├── GHCR image
+├── Jenkins deployment job
+├── Route53 record
+├── Route53 routing / health checks
+├── NPM proxy host
+├── environment
+└── ports / deployment metadata
 ```
 
-The CLI validates the request, uses the saved configuration for the current project, performs the work, and shows failures directly in the same VS Code terminal.
+The local project normally needs only its Cloud project reference in:
 
-### One installation, many projects
+```text
+.indraq/project.json
+```
 
-Install globally once:
+---
 
-```bash
+## Roles and permissions
+
+| Role | Typical responsibility |
+| --- | --- |
+| `user` | Work on permitted projects, configure personal providers, prebuild/deploy, use shared environments and manage their own supported credentials |
+| `manager` | Everything a user can do, plus manage normal users, project membership/resource access, managed user AWS keys and audit logs |
+| `admin` | Full organization control, including managers/admins, role changes, shared environments and admin-only Route53 health-check operations |
+
+Important role rules:
+
+- Managers can create and manage normal `user` accounts.
+- Only admins can create managers/admins or change an existing IndraQ role.
+- The last active admin cannot be deleted or demoted.
+- An admin cannot use the role endpoint to demote their own active session.
+- Role promotion/demotion is synchronized across linked managed providers before the Cloud role is committed.
+
+Provider role mapping is intentional. Nginx Proxy Manager only provides `user` and `admin`, so IndraQ maps `manager` and `admin` to NPM `admin`. AWS and Jenkins use their IndraQ-managed role/policy mappings.
+
+---
+
+# Quick start
+
+## 1. Install
+
+Requirements:
+
+- Node.js **22+**
+- npm
+- Git
+- Docker when building/pushing Docker images
+- network access to the IndraQ Cloud and providers you use
+
+Install the published CLI:
+
+```powershell
 npm install -g indraq_cli
 ```
 
-Then use it anywhere:
-
-```text
-C:\Projects\accounting-service> indraq deploy:dev
-C:\Projects\mobile-app>        indraq build mobile:dev
-C:\Projects\another-app>      indraq configure
-```
-
-Each project keeps its own `.indraq/` configuration. The CLI itself is not installed separately in every project.
-
----
-
-## Explain it like I am new
-
-Imagine you built a school project.
-
-You have the project files on your computer. You want another computer called **Jenkins** to build or deploy them for you.
-
-Without IndraQ CLI, you may need to:
-
-1. remember many commands;
-2. open Jenkins in the browser;
-3. choose the correct job;
-4. fill many parameters;
-5. copy environment variables;
-6. wait for the build;
-7. keep refreshing logs.
-
-With IndraQ CLI, you configure the project once and later type one command.
-
-For a mobile app:
-
-```text
-Your VS Code project
-        │
-        │  indraq build mobile:prod
-        ▼
-IndraQ CLI
-        │
-        ├── checks you are at the project root
-        ├── validates Expo / React Native
-        ├── reads the saved Production settings
-        ├── reads root .env automatically
-        ├── creates a clean source snapshot
-        ├── sends it to Production Jenkins
-        └── shows Jenkins logs here
-                │
-                ▼
-       Production Jenkins
-                │
-                ├── installs dependencies
-                ├── prepares Android
-                ├── builds APK/AAB
-                └── publishes the artifact
-```
-
-You do **not** need to give Jenkins a Git URL, Git branch, app subdirectory, or pasted `.env` content for this mobile workflow.
-
----
-
-## What changed in v1.5.8?
-
-v1.5.8 keeps the working Jenkins, mobile-build, GHCR, and complete-help behavior from v1.5.7 and tightens project configuration sharing.
-
-### Git-safe project configuration in v1.5.8
-
-- IndraQ no longer adds `.indraq/` to the project `.gitignore`.
-- Only `.indraq/jenkins.local.json` is added at the project root as the machine-local Jenkins binding.
-- Existing `.gitignore` files are reused rather than replaced.
-- Existing exact ignore entries are detected, so repeated configuration does not duplicate them.
-- `.indraq/jenkins.json`, `.indraq/docker.json`, and `.indraq/mobile.json` remain available to Git and can be shared with another developer.
-- Jenkins username/token/password remain outside the repo under `~/.indraq/jenkins/...`; another developer receives server/config metadata but not your login credential.
-- Known old IndraQ-generated ignore-all rules are migrated carefully; unrelated user-authored Git rules are preserved.
-
-
-### Jenkins-console-quality logs and server Gradle reuse in v1.5.8
-
-- The terminal log streamer now reads Jenkins **`logText/progressiveHtml`**, the same progressive endpoint used by the classic Jenkins web console. Jenkins therefore removes/renders hidden `ConsoleNote` annotations before the CLI displays the text, so internal `ha:////...` payloads no longer pollute VS Code output.
-- HTML markup is converted back to plain terminal text while preserving usernames, timestamps, Pipeline lines, errors, and normal line spacing. `progressiveText` remains only as a compatibility fallback with explicit ConsoleNote filtering.
-- Failed mobile builds now end with a short **Key Jenkins error lines** summary plus the direct Jenkins build URL.
-- The mobile Jenkinsfile still normalizes Windows CRLF in `android/gradlew`, but v1.5.8 also restores the Jenkins server's shared Gradle cache at `$HOME/.gradle` instead of creating an empty per-project Gradle cache.
-- Gradle execution prefers the exact cached project-wrapper distribution. If no exact wrapper distribution is cached, an installed Jenkins-server Gradle from the same major version can be reused. The project wrapper remains the final fallback.
-- If a wrapper download is genuinely necessary, the temporary Jenkins copy of `gradle-wrapper.properties` gets `networkTimeout=120000` (120 seconds) instead of failing at Gradle's short default timeout.
-- `FULL_RESET` no longer deletes Jenkins' shared Gradle cache. It clears project-local npm/Expo caches and generated Android state only.
-- Jenkins queue updates are printed as normal lines instead of carriage-return cursor updates.
-
-### Jenkins/Git behavior hardened in v1.5.x
-
-- Mobile always targets the Jenkins job **`Mobile app Cli build`**. The job name is no longer configurable per project.
-- The mobile Jenkinsfile no longer contains the Groovy-invalid escaped-dot expression that caused `unexpected char: '\'` during pipeline compilation.
-- Mobile Jenkins HTTP uploads now preserve the Jenkins web-session cookie together with the CSRF crumb, fixing HTTP 403 responses when Jenkins is configured with username/password authentication. API-token authentication remains supported.
-- Mobile build output now says explicitly that `.env` is excluded only from the source archive and is uploaded separately to Jenkins.
-- `.indraq/mobile.json`, `.indraq/docker.json`, and `.indraq/jenkins.json` are intended to be committed to Git.
-- `.indraq/jenkins.local.json`, Jenkins username/token/password, `.env`, and `jenkins-cli.jar` are machine-local and never meant to be committed.
-- Docker CLI deployments now start Jenkins with `ACTION=DEPLOY`, `IMAGE_TAG`, optional `IMAGE_DIGEST`, and `DEPLOYMENT_SOURCE=INDRAQ_CLI`.
-- Expo versions are synchronized to `app.json` when possible. React Native CLI versions are synchronized to `android/app/build.gradle` / `build.gradle.kts` when those values are simple literals. Jenkins still enforces the requested version during the actual Android build.
-
-### App name is now part of Mobile configuration
-
-Every mobile project stores an app name. IndraQ uses this name when it creates the final APK/AAB filename.
-
-### Android Version and versionCode
-
-New projects start with:
-
-```text
-Version:     0.1
-versionCode: 1
-```
-
-Both counters auto-increment **after a successful Jenkins build** by default. Failed or cancelled builds do not consume a version.
-
-The version rule is simple: the final numeric part increases by one.
-
-```text
-0.1   → 0.2
-0.9   → 0.10
-1.2.3 → 1.2.4
-```
-
-`versionCode` increments by one:
-
-```text
-1 → 2 → 3 → 4
-```
-
-You can change either value or turn either auto-increment switch off from:
-
-```text
-indraq configure
-  → Mobile App
-  → Version & versionCode
-```
-
-When auto-increment is disabled, IndraQ does not block the build. It prints a soft warning reminding you that the same value will be reused.
-
-### Predictable Android artifact names
-
-APK/AAB files produced by the IndraQ mobile Jenkinsfile now follow:
-
-```text
-<AppName>_<Version>_<versionCode>_<YYYY-MM-DD>_<HHmm>.<apk|aab>
-```
-
-Example:
-
-```text
-Nefazo_0.1_1_2026-08-30_2051.apk
-```
-
-The date/time is always generated in **Asia/Kolkata (IST)**. Time contains hours and minutes only.
-
-### Mobile still always uses Production Jenkins
-
-The Jenkins rule remains intentionally simple:
-
-```text
-indraq build mobile:dev     → Production Jenkins
-indraq build mobile:staging → Production Jenkins
-indraq build mobile:prod    → Production Jenkins
-```
-
-Docker continues to support both Development and Production Jenkins:
-
-```text
-indraq deploy:dev  → Development Jenkins
-indraq deploy:prod → Production Jenkins
-```
-
-### Existing v1.4 mobile projects migrate automatically
-
-Existing `.indraq/mobile.json` files are upgraded automatically. Project type, app name, version/versionCode, auto-increment settings, and environment defaults are preserved when present. Older configurable mobile Jenkins job names are removed because mobile now always targets **`Mobile app Cli build`**.
-
----
-
-## Requirements
-
-### Developer computer
-
-| Requirement | Why | Check |
-|---|---|---|
-| **Node.js 22+** | Runs IndraQ CLI | `node --version` |
-| **npm** | Installs / updates the CLI | `npm --version` |
-| **Git** | GitHub identity/org discovery and optional source revision metadata | `git --version` |
-| **Docker GHCR login** | Registry authentication used for image push | `docker login ghcr.io` (one-time, when needed) |
-| **Docker** | Docker deployment module | `docker --version` |
-| **Java** | Runs Jenkins CLI | `java -version` |
-| **tar** | Packages the local mobile source snapshot | `tar --version` |
-| **Jenkins account** | Starts Jenkins jobs | Jenkins username + API token |
-
-> [!TIP]
-> Node.js **24** is recommended for IndraQ developer machines, but v1.5.8 supports Node.js **22 and newer**.
-
-### Jenkins mobile build machine
-
-The provided mobile Jenkinsfile expects the Jenkins agent to have:
-
-- Java;
-- Node.js and npm;
-- Android SDK;
-- `sdkmanager`;
-- Bash;
-- `tar` / `sha256sum`;
-- Jenkins **File Parameter** plugin;
-- writable `/opt/mobile-builder`;
-- Android SDK at `/opt/android-sdk` unless you edit the Jenkinsfile;
-- the Jenkins account should have a writable `$HOME/.gradle` cache (normally `/var/jenkins_home/.gradle`);
-- optionally, a system `gradle` executable may be installed. IndraQ uses it only when its major version matches the project wrapper.
-
----
-
-## Install Java 21
-
-Java is required because Jenkins distributes its CLI as `jenkins-cli.jar`.
-
-### Windows
-
-Open PowerShell:
+Check it:
 
 ```powershell
-winget install EclipseAdoptium.Temurin.21.JDK
-```
-
-Then **fully close and reopen VS Code**.
-
-Verify:
-
-```powershell
-java -version
-where.exe java
-```
-
-### Ubuntu / Debian
-
-```bash
-sudo apt update
-sudo apt install -y openjdk-21-jdk
-java -version
-```
-
-### macOS
-
-Using Homebrew:
-
-```bash
-brew install --cask temurin@21
-java -version
-```
-
-> [!IMPORTANT]
-> If `java -version` fails, fix Java before running Jenkins configuration.
-
----
-
-## Install IndraQ CLI
-
-Install globally:
-
-```bash
-npm install -g indraq_cli
-```
-
-Verify:
-
-```bash
 indraq --version
-```
-
-Expected for this release:
-
-```text
-1.5.3
-```
-
-Update later:
-
-```bash
-npm install -g indraq_cli@latest
-```
-
-Uninstall:
-
-```bash
-npm uninstall -g indraq_cli
-```
-
----
-
-## Run the doctor
-
-Before debugging a mysterious machine problem, run:
-
-```bash
 indraq doctor
+indraq --help
 ```
 
-It checks:
+When developing the CLI itself:
 
-- Node.js version;
-- Java;
-- Git;
-- `tar`;
-- how the `indraq` command resolves on your machine.
-
-This is especially useful on Windows if another file named `IndraQ` is shadowing the npm executable.
+```powershell
+npm install
+npm run build
+npm test
+npm link
+```
 
 ---
 
-## Configuration home
+## 2. Login
 
-Run from the project you want to configure:
+```powershell
+indraq login
+```
 
-```bash
+Check the current identity:
+
+```powershell
+indraq whoami
+```
+
+The normal CLI uses the official IndraQ Cloud endpoint built into the package. Users do not need to configure an API URL manually.
+
+If the account was created with a temporary password, the first login requires a new password before normal Cloud operations continue.
+
+---
+
+## 3. Configure your providers once
+
+The easiest entry point is:
+
+```powershell
 indraq configure
 ```
 
-You will see:
+It provides one menu for:
 
 ```text
-IndraQ CLI Configuration
-
-? What do you want to configure?
-> Jenkins
-  Docker / GHCR
-  Mobile App
-  ------------------------------
-  Review current project configuration
-  Exit
+Reusable provider credentials
+Current project infrastructure / prebuild
+Mobile settings
+Provider status
 ```
 
-The rule is simple:
+You can also configure a provider directly:
 
-> **Persistent settings are changed with `indraq configure`. One-time build changes are supplied as flags.**
+```powershell
+indraq provider configure aws
+indraq provider configure npm
+indraq provider configure jenkins-dev
+indraq provider configure jenkins-prod
+indraq provider configure ghcr
+```
+
+Review what is configured without exposing secrets:
+
+```powershell
+indraq provider list
+```
 
 ---
 
-## Configure Jenkins
+## 4. Create or connect a project
 
-Choose:
+For a brand-new application:
 
-```text
-Configure
-  └── Jenkins
+```powershell
+indraq init
 ```
 
-The Jenkins menu is:
+For an existing codebase that should become a new Cloud project without scaffolding it:
 
-```text
-> Development
-  Production — used by all mobile builds
-  ------------------
-  Review Jenkins connections
-  Back
+```powershell
+indraq project create
 ```
 
-There are only **two Jenkins infrastructure environments** in a project.
+For a folder that belongs to an existing Cloud project:
 
-| Jenkins connection | Used by |
-|---|---|
-| **Development** | `indraq deploy:dev` |
-| **Production** | `indraq deploy:prod` **and every mobile build** |
-
-This means:
-
-```text
-Mobile Development  ┐
-Mobile Staging      ├──→ Production Jenkins
-Mobile Production  ┘
+```powershell
+indraq project link
 ```
 
-A command such as `indraq build mobile:dev` means **build the app using its Development mobile settings on Production Jenkins**. It does not mean “use Development Jenkins.”
+Check the current association:
 
-For each Jenkins connection, IndraQ asks for:
-
-```text
-Jenkins URL/domain
-Jenkins username
-Jenkins API token or password
+```powershell
+indraq project status
 ```
-
-It then:
-
-1. downloads `<jenkins>/jnlpJars/jenkins-cli.jar`;
-2. stores the secret outside the project;
-3. runs Jenkins `who-am-i`;
-4. rejects wrong credentials immediately;
-5. saves the verified non-secret connection metadata in `.indraq/jenkins.json`.
-
-Configure Jenkins once per project. Normal Docker/mobile build commands reuse the saved connection and credentials.
-
-Use a Jenkins API token instead of an account password whenever possible.
 
 ---
 
-## Configure Docker / GHCR
+## 5. Prepare infrastructure
 
-Choose:
-
-```text
-Configure
-  └── Docker / GHCR
+```powershell
+indraq prebuild
 ```
 
-The menu lets you independently change:
+For web projects, prebuild is the main infrastructure reconciliation command. Depending on the project and selected options, it can prepare/reconcile:
 
 ```text
-Development
-Production
-GitHub / GHCR destination
-Review
-Back
+GHCR image association
+Route53 DNS
+Route53 routing / health checks
+NPM reverse proxy / SSL
+Jenkins deployment
+project resource associations
 ```
 
-Development and Production each store:
-
-- image name;
-- Dockerfile path.
-
-GitHub/GHCR stores:
-
-- personal account or organization;
-- selected GHCR owner.
-
-The Docker deployment Jenkins connection is configured separately under **Jenkins**.
-
-When `indraq deploy:dev` or `indraq deploy:prod` has built and pushed the image, the CLI starts the Jenkins job whose name matches the image repository name (for example `ghcr.io/indraq-innovations/immortality-accounting-service` maps to Jenkins job `immortality-accounting-service`) and supplies exactly:
-
-```text
-ACTION=DEPLOY
-IMAGE_TAG=<primary pushed tag>
-IMAGE_DIGEST=<sha256 digest, when available>
-DEPLOYMENT_SOURCE=INDRAQ_CLI
-```
-
-This is the CLI path; the Jenkinsfile may still keep its Generic Webhook Trigger for other deployment sources if you want it.
+Use it when creating a deployment for the first time **and** when infrastructure settings need to be reconciled later.
 
 ---
 
-## Configure Mobile App
+## 6. Deploy
 
-Choose:
+Deploy with a named shared environment:
 
-```text
-Configure
-  └── Mobile App
+```powershell
+indraq deploy build --env staging
 ```
 
-The menu is:
+Common shortcuts:
 
-```text
-> Project settings
-  Version & versionCode
-  Development
-  Staging
-  Production
-  ------------------
-  Review Mobile App configuration
-  Back
-```
-
-### Project settings
-
-IndraQ asks for:
-
-```text
-Mobile app name
-Project type
-  - Expo
-  - React Native CLI
-```
-
-The app name is saved per project and is used in the final APK/AAB filename.
-
-The mobile Jenkins job is **not configurable**. Every mobile build targets exactly:
-
-```text
-Mobile app Cli build
-```
-
-All mobile Development, Staging, and Production builds use the project's **Production Jenkins** connection. The CLI verifies that `Mobile app Cli build` exists before uploading source.
-
-### Version & versionCode settings
-
-Choose:
-
-```text
-Mobile App
-  → Version & versionCode
-```
-
-You can configure these independently:
-
-```text
-Version
-versionCode
-Auto-increment Version
-Auto-increment versionCode
-```
-
-Defaults:
-
-```text
-Version:                    0.1
-versionCode:                1
-Auto-increment Version:     ON
-Auto-increment versionCode: ON
-```
-
-Auto-increment happens only after Jenkins reports `SUCCESS`. A failed build leaves both saved values unchanged.
-
-If you manually change Version/versionCode while a Jenkins build is still running, IndraQ will not overwrite your newer values when that build finishes.
-
-### Version values survive Git clones
-
-`.indraq/mobile.json` is project configuration and should be committed. That means another developer who clones/pulls the repository receives the same next Version/versionCode.
-
-IndraQ also synchronizes the configured values into the Android-facing project file when it can do so safely:
-
-```text
-Expo             → app.json → expo.version + expo.android.versionCode
-React Native CLI → android/app/build.gradle(.kts) → versionName + versionCode
-```
-
-Before a remote build, Jenkins applies the requested values again after Expo prebuild / before Gradle, so the artifact uses the values shown in the CLI build plan.
-
-After a successful build with auto-increment enabled, commit the changed `.indraq/mobile.json` and synced app-version file(s). Failed builds do not increment the shared values.
-
-### Environment settings
-
-Each mobile environment stores:
-
-- default build output;
-- default build profile.
-
-Profiles:
-
-| Profile | Meaning |
-|---|---|
-| **FAST** | Fresh source snapshot; reuse project npm cache plus the Jenkins server shared Gradle cache |
-| **CLEAN** | Clean generated project build state before building |
-| **FULL_RESET** | Clear project npm/Expo/generated Android state while preserving the Jenkins server shared Gradle cache |
-
-After saving one environment you return to the Mobile App menu, so you can configure another environment without rerunning the command.
-
----
-
-## Docker deployment
-
-Development:
-
-```bash
+```powershell
 indraq deploy:dev
-```
-
-Alias:
-
-```bash
-indraq deploy:development
-```
-
-Production:
-
-```bash
 indraq deploy:prod
 ```
 
-Alias:
+The deployment flow builds the Docker image, pushes it to the configured registry and runs the configured Jenkins deployment.
 
-```bash
-indraq deploy:production
-```
+---
 
-Docker deployment still follows this flow:
+# Recommended workflow in chronological order
+
+| Step | Command | Why it matters |
+| ---: | --- | --- |
+| 1 | `indraq doctor` | Verify the machine and CLI command resolution before debugging anything else |
+| 2 | `indraq login` | Authenticate to the organization control plane |
+| 3 | `indraq configure` | Store reusable provider credentials once |
+| 4 | `indraq environment list` | See which admin-managed server targets are available |
+| 5 | `indraq init` / `project create` / `project link` | Establish the project correctly before infrastructure work |
+| 6 | `indraq project status` | Confirm which Cloud project and resources the folder is using |
+| 7 | `indraq prebuild` | Reconcile DNS, proxy, image and Jenkins infrastructure |
+| 8 | `indraq deploy build --env <name>` | Build, push and deploy the application |
+| 9 | `indraq logs` | Audit administrative/infrastructure activity when investigating changes |
+
+For normal daily work after initial setup, developers usually spend most of their time around `project status`, `prebuild`, deployment commands and Jenkins pipeline commands.
+
+---
+
+# Command reference
+
+`indraq --help` and `<command> --help` are the authoritative source for flags. The tables below explain **when to use each command and why it exists**.
+
+Most list/select commands support some combination of:
 
 ```text
-validate Docker / GitHub / Java / Jenkins
-        ↓
-build Docker image
-        ↓
-push image to GHCR
-        ↓
-find Jenkins job with same name as image
-        ↓
-run Jenkins pipeline
-        ↓
-stream logs into terminal
+--search <text>   filter results
+--limit <number>  control the number loaded
+--all             load all results
+```
+
+## A. Help, diagnostics and authentication
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq --help` | Show the complete live CLI command tree. Start here when you do not remember a command. |
+| `indraq <command> --help` | Show flags and subcommands for one command. Best source for exact current syntax. |
+| `indraq help [topic]` | Focused help for supported topics such as `configure`, `docker`, `mobile`, `aws` and `doctor`. |
+| `indraq doctor` | Diagnose Node.js and command-resolution problems. Run this before deeper troubleshooting. |
+| `indraq login` | Authenticate to IndraQ Cloud. Supports `--email` and `--password` for scripted use. |
+| `indraq logout` | Remove the current Cloud session from the machine. |
+| `indraq whoami` | Show the authenticated IndraQ identity. Useful before admin or production actions. |
+| `indraq password reset` | Email-OTP password recovery for Cloud, NPM, Jenkins or all password-based accounts. AWS keys are intentionally separate. |
+| `indraq cloud login` | Namespaced alias of `indraq login`. |
+| `indraq cloud logout` | Namespaced alias of `indraq logout`. |
+| `indraq cloud whoami` | Namespaced alias of `indraq whoami`. |
+
+Examples:
+
+```powershell
+indraq help aws
+indraq whoami
+indraq password reset --email user@example.com --all
 ```
 
 ---
 
-## Mobile build overview
-
-> [!IMPORTANT]
-> **Every mobile build runs on the saved Production Jenkins connection.** `mobile:dev`, `mobile:staging`, and `mobile:prod` are mobile application environments, not Jenkins environments.
-
-
-The mobile module deliberately does **not** ask for:
-
-- Git repository URL;
-- Git branch;
-- app subdirectory;
-- pasted env text;
-- "save env" checkbox.
-
-Why? Because the CLI is already running inside the developer's project.
-
-### Root directory rule
-
-Run mobile builds from the directory containing the mobile app's `package.json`.
-
-Correct:
-
-```text
-my-mobile-app/
-├── package.json       ← run command here
-├── .env
-├── src/
-├── android/           ← React Native CLI
-└── ...
-```
-
-Wrong:
-
-```text
-my-mobile-app/android/ ← do not run it here
-```
-
-IndraQ does not silently search parent folders. If `package.json` is not in the current directory, the build stops.
-
----
-
-## Mobile build matrix
-
-Invalid combinations are blocked both by the CLI **and** by the Jenkinsfile.
-
-| Project type | Environment | Allowed output |
-|---|---|---|
-| Expo | Development | **Development Client only** |
-| Expo | Staging | **Release APK** or **Release AAB** |
-| Expo | Production | **Release APK** or **Release AAB** |
-| React Native CLI | Development | **Debug APK only** |
-| React Native CLI | Staging | **Release APK** or **Release AAB** |
-| React Native CLI | Production | **Release APK** or **Release AAB** |
-
-The CLI does not show impossible choices during configuration.
-
-For example, Expo Development automatically becomes:
-
-```text
-Build output: Development Client
-```
-
-There is no pointless APK/AAB menu for that combination.
-
----
-
-## Mobile build commands
-
-Development:
-
-```bash
-indraq build mobile:dev
-```
-
-Alias:
-
-```bash
-indraq build mobile:development
-```
-
-Staging:
-
-```bash
-indraq build mobile:staging
-```
-
-Production:
-
-```bash
-indraq build mobile:prod
-```
-
-Alias:
-
-```bash
-indraq build mobile:production
-```
-
-### First build
-
-If required mobile configuration is missing, the CLI asks only for the missing settings and saves them.
-
-### Later builds
-
-Once configured:
-
-```bash
-indraq build mobile:staging
-```
-
-uses the saved Staging output/profile without asking the same questions again.
-
-Before uploading anything, IndraQ prints a build plan and asks for confirmation.
-
----
-
-## Mobile build flags
-
-Flags override saved defaults **for one build only**.
-
-They do not permanently change `mobile.json`.
-
-### Output override
-
-```bash
-indraq build mobile:staging --output aab
-```
-
-Accepted output aliases:
-
-```text
-dev-client / development-client
-debug / debug-apk
-apk / release-apk
-aab / release-aab
-```
-
-The matrix is still enforced. For example, this is rejected:
-
-```bash
-indraq build mobile:dev --output aab
-```
-
-for an Expo Development project.
-
-### Profile override
-
-```bash
-indraq build mobile:prod --profile clean
-```
-
-Available profiles:
-
-```text
-fast
-clean
-full-reset
-```
-
-### Verbose Gradle logs
-
-```bash
-indraq build mobile:prod --verbose
-```
-
-### Dry run
-
-Validate everything and print the plan without uploading source or starting Jenkins:
-
-```bash
-indraq build mobile:staging --dry-run
-```
-
-### Skip final confirmation
-
-Useful for a developer who already knows exactly what will run:
-
-```bash
-indraq build mobile:prod --yes
-```
-
-Example combination:
-
-```bash
-indraq build mobile:prod --output aab --profile clean --verbose --yes
+## B. Reusable providers and shared environments
+
+Configure these before expecting project automation to work.
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq configure` | Main configuration home. Recommended interactive entry point for providers, current-project prebuild and mobile settings. |
+| `indraq provider configure [provider]` | Configure `aws`, `npm`, `jenkins-dev`, `jenkins-prod` or `ghcr` directly in Cloud. |
+| `indraq provider list` | Show configured providers without exposing secrets. Useful before `prebuild`, user provisioning or Jenkins operations. |
+| `indraq environment create` | **Admin:** create a reusable named server environment. Prevents users from memorizing IPs. |
+| `indraq environment list` | List shared environments and targets. |
+| `indraq environment update [name]` | **Admin:** update an environment target. Projects can keep using the friendly environment name. |
+| `indraq environment delete [name]` | **Admin:** remove an environment. Use `--yes` only when intentionally bypassing confirmation. |
+| `indraq credentials configure [provider]` | Compatibility namespace for provider configuration. Prefer `provider configure`. |
+| `indraq credentials list` | Compatibility namespace for provider listing. Prefer `provider list`. |
+| `indraq credentials sync` | Legacy credential synchronization command retained for compatibility. |
+| `indraq credentials restore` | Legacy credential restore workflow retained for compatibility. |
+| `indraq server create` | Deprecated alias that creates a shared environment. Prefer `environment create`. |
+| `indraq server list` | Deprecated alias that lists shared environments. Prefer `environment list`. |
+
+Example:
+
+```powershell
+indraq environment create
+indraq environment list --all
+indraq provider configure jenkins-prod
+indraq provider list
 ```
 
 ---
 
-## Android versioning and artifact names
+## C. Organization users and roles
 
-IndraQ v1.5.8 currently manages **Android** versioning only. iOS version/build-number management is intentionally out of scope for now.
+Unified user commands coordinate identities across IndraQ Cloud and selected configured providers.
 
-### What value does a build use?
+| Command | Usage / importance |
+| --- | --- |
+| `indraq user list` | **Manager/admin:** list organization users. Use it before updates/deletion when you do not remember exact usernames. |
+| `indraq user create [username]` | **Manager/admin:** create a Cloud user and selected AWS/NPM/Jenkins identities in one workflow. |
+| `indraq user update [username]` | Update selected providers. **Admin role changes are synchronized across linked managed providers.** |
+| `indraq user delete [username]` | Permanently delete the selected user's managed identities. External providers are handled before the Cloud row. |
 
-A build uses the values currently stored in `.indraq/mobile.json`.
+Useful examples:
 
-Example before the build:
-
-```text
-Version:     0.1
-versionCode: 1
+```powershell
+indraq user create nitin --providers cloud,aws,npm,jenkins --role user
+indraq user update nitin --role manager
+indraq user update nitin --role user
+indraq user delete nitin
 ```
 
-The Jenkins build receives exactly `0.1` and `1`, applies them to the generated/native Android Gradle project, and produces the APK/AAB with those values.
+### Role synchronization
 
-Only after Jenkins finishes successfully are enabled counters advanced for the next build.
+When an admin changes a role, for example:
 
-### Auto-increment examples
-
-With both switches ON:
-
-```text
-Build 1 uses: 0.1 / 1
-Success
-Next saved:   0.2 / 2
-
-Build 2 uses: 0.2 / 2
-Success
-Next saved:   0.3 / 3
+```powershell
+indraq user update nitin --role manager
 ```
 
-If `Auto-increment Version` is OFF:
+IndraQ reconciles linked providers in this direction:
 
 ```text
-Version stays 0.1
-versionCode may still move 1 → 2 → 3
+AWS role/policies
+NPM role
+Jenkins managed roles (DEV/PROD when linked)
+        ↓
+IndraQ Cloud role LAST
 ```
 
-If `Auto-increment versionCode` is OFF, IndraQ prints a warning before every mobile build because Android release stores normally expect a higher versionCode for upgrades.
+If an external role update fails, the Cloud role is not committed and already-changed external providers are rolled back on a best-effort basis.
 
-### Artifact filename
+### Permanent deletion
 
-The Jenkins mobile pipeline renames the primary APK/AAB to:
+`indraq user delete` is a **real delete**, not a soft-disable command.
+
+The unified flow deletes external identities first. Cloud deletion is intentionally last. If an external provider genuinely fails, the Cloud identity is retained so an administrator can repair the problem and retry.
+
+When Cloud deletion runs, shared organization resources owned by the target user are preserved/reassigned rather than blindly destroyed, while user-scoped rows are removed according to their database relationships. The final Cloud user row is deleted.
+
+A missing external account during deletion is considered an already-achieved final state where supported; deletion should be safe to retry.
+
+---
+
+## D. Project membership and resource access
+
+Project membership and provider-native resource access are related but not identical.
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq project add user` | **Manager/admin:** give a user access to a Cloud project. |
+| `indraq project delete user` | **Manager/admin:** remove a user's Cloud project access. |
+| `indraq access add user` | Grant a project user access to selected native AWS/NPM/Jenkins resources with audited synchronization. |
+| `indraq access delete user` | Revoke selected native resource access without deleting the organization user. |
+
+Use user deletion only when the person should be removed. Use access commands when the person remains in the organization but should gain/lose a project or resource.
+
+---
+
+## E. Project lifecycle
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq init [directory]` | Safely create a new application and IndraQ project setup. Use `--skip-install` when you want files generated without dependency installation. |
+| `indraq project create [name]` | Register an **existing current folder** as a new Cloud project without scaffolding or infrastructure changes. |
+| `indraq project list` | List organization projects and your VIEW/WRITE access. |
+| `indraq project link` | Link/re-link the current folder to an existing accessible Cloud project. |
+| `indraq project sync` | Migrate older local IndraQ metadata to the Cloud model and keep the local project reference minimal. |
+| `indraq project status` | Show the current Cloud project and infrastructure associations, optionally for an environment. |
+| `indraq dockerfile create` | Generate Docker support for an existing project without running the full `init` workflow. |
+
+### `indraq init`
+
+Use this for a **new project**, not to overwrite a populated application accidentally.
+
+The wizard can create supported frontend, backend, full-stack and mobile structures, environment files, ignore files and Docker support. Framework/version choices are collected interactively. Dependency installation can be skipped:
+
+```powershell
+indraq init my-service --skip-install
+```
+
+### `indraq project create`
+
+Use this when code already exists and only Cloud registration is needed:
+
+```powershell
+indraq project create order-service --kind backend --framework express --port 5000 --health /health
+```
+
+It does not scaffold the application and does not automatically create DNS/proxy/Jenkins infrastructure.
+
+### `indraq dockerfile create`
+
+Common flags include:
 
 ```text
-<AppName>_<Version>_<versionCode>_<YYYY-MM-DD>_<HHmm>.<extension>
+--framework <framework>
+--node-version <version>
+--output <directory>
+--port <port>
+--health <endpoint>
+--compose
+--force
+```
+
+---
+
+## F. Infrastructure reconciliation and deployment
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq prebuild` | Main web-infrastructure reconciliation command for GHCR, Route53, NPM and Jenkins. Run before first deployment and after infrastructure changes. |
+| `indraq deployment create` | Deployment-oriented entry point to the prebuild/reconciliation flow. |
+| `indraq deployment run --env <name>` | Run the configured deployment for a shared environment. |
+| `indraq deploy build --env <name>` | Build Docker image, push it and run the Jenkins deployment. Primary explicit deploy command. |
+| `indraq deploy configure` | Open the main configuration home from the deploy namespace. |
+| `indraq deploy:configure` | Legacy/top-level alias for configuration. |
+| `indraq deploy:dev` | Shortcut for deployment using the `dev`/development shared environment. |
+| `indraq deploy:prod` | Shortcut for deployment using the `prod`/production shared environment. |
+
+Useful prebuild flags:
+
+```text
+--env <environment>
+--secondary-env <environment>
+--routing SIMPLE|FAILOVER|WEIGHTED|LATENCY
+--host-port <port>
+--networks <list>
+--volumes <list>
+--flags <flags>
+--yes
+```
+
+Example failover preparation:
+
+```powershell
+indraq prebuild --env production --secondary-env production-backup --routing FAILOVER
+```
+
+The purpose of prebuild is **reconciliation**, not blind creation. It should discover what already exists and create/update what the project requires.
+
+---
+
+## G. Jenkins: pipelines, deployments and users
+
+Jenkins commands use the Jenkins credentials stored in the authenticated user's IndraQ Cloud profile.
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq jenkins pipelines` | List all buildable jobs/pipelines visible to the Jenkins account, including jobs in folders. No default 10-job cap when `--limit` is omitted. |
+| `indraq jenkins run [job]` | Select/run any visible pipeline. IndraQ discovers its Jenkins parameters and prompts for values. |
+| `indraq jenkins pipeline:run [job]` | Long-form alias of `jenkins run`. |
+| `indraq jenkins create-deployment` | Trigger only the Jenkins `CREATE-DEPLOYMENT` workflow for a component; it does not create Route53/NPM resources. |
+| `indraq jenkins deployments` | List Jenkins deployment jobs. |
+| `indraq jenkins deployment:update [job]` | Reconcile a deployment through `CREATE-DEPLOYMENT`. |
+| `indraq jenkins deployment:delete [job]` | Delete a Jenkins deployment job after confirmation. |
+| `indraq jenkins users` | List Jenkins users visible to the configured admin-capable identity. |
+| `indraq jenkins user:update [username]` | Update a Jenkins user's password/roles directly. Unified organization role changes should normally use `indraq user update`. |
+| `indraq jenkins user:delete [username]` | Delete a Jenkins user directly. Unified organization deletion should normally use `indraq user delete`. |
+
+Choose Jenkins environment explicitly when useful:
+
+```powershell
+indraq jenkins pipelines --stage dev
+indraq jenkins pipelines --stage prod
+```
+
+### Run any Jenkins pipeline
+
+Interactive selection:
+
+```powershell
+indraq jenkins run
+```
+
+Direct job name:
+
+```powershell
+indraq jenkins run api-admin-service --stage dev
+```
+
+Folder jobs are supported using their full job path when visible.
+
+IndraQ inspects the job's parameter definitions. Parameters with a usable Jenkins default are shown as **optional**; parameters without one are treated as **required**. Boolean, choice, password, text and string parameters get appropriate prompts.
+
+By default the CLI waits for completion. To queue and return immediately:
+
+```powershell
+indraq jenkins run api-admin-service --stage dev --no-wait
+```
+
+### Create only a Jenkins deployment
+
+Use this when DNS and proxy already exist or you intentionally want Jenkins only:
+
+```powershell
+indraq jenkins create-deployment --stage dev --component backend --image-name api-service --host-port 5010
+```
+
+Common optional deployment fields include networks, volumes and Docker flags.
+
+---
+
+## H. AWS IAM and managed access keys
+
+IndraQ IAM users are designed for CLI/API access. Console login is intentionally not part of the IAM-user flow.
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq iam users` | List AWS IAM users. |
+| `indraq iam user:create [username]` | Create an IAM user and normally an access key; optional managed policy ARNs can be attached. |
+| `indraq iam user:update [username]` | Update attached managed policies for an IAM user. |
+| `indraq iam user:delete [username]` | Delete an IAM user and removable dependencies after confirmation. |
+| `indraq iam credentials [username]` | Reveal the authenticated user's own IndraQ-managed AWS access key/secret stored encrypted in Cloud. |
+| `indraq iam access-key rotate [username]` | Rotate an IndraQ-managed IAM access key safely; manager/admin can select managed organization users when authorized. |
+
+Examples:
+
+```powershell
+indraq iam users --all
+indraq iam user:create nitin
+indraq iam credentials nitin
+indraq iam access-key rotate nitin --reason "Quarterly credential rotation"
+```
+
+AWS does not reveal an old secret access key again after creation. For AWS identities created through the managed IndraQ workflow, the generated secret can be stored encrypted in IndraQ Cloud so the owner can retrieve it later through the authorized CLI command.
+
+During rotation, IndraQ creates/stores the replacement managed key before removing the previous managed key so the recovery record does not point to a key that was never successfully created.
+
+---
+
+## I. Route53 DNS and health checks
+
+| Command | Usage / importance |
+| --- | --- |
+| `indraq dns zones` | List Route53 hosted zones available to the configured AWS identity. |
+| `indraq dns records` | List records in a hosted zone. Use `--zone` when scripting. |
+| `indraq dns create [record]` | Create a Route53 record interactively or with flags. |
+| `indraq dns update [record]` | UPSERT/reconcile a Route53 record. |
+| `indraq dns delete [record]` | Select/delete Route53 record set(s). |
+| `indraq healthcheck list` | List/select Route53 health checks. |
+| `indraq healthcheck create` | **Admin:** create a Route53 health check. |
+| `indraq healthcheck delete [id]` | **Admin:** delete a Route53 health check. |
+
+Supported record types exposed by the command include:
+
+```text
+A
+CNAME
+TXT
+MX
+```
+
+Supported routing choices include:
+
+```text
+SIMPLE
+FAILOVER
+WEIGHTED
+LATENCY
 ```
 
 Example:
 
-```text
-Nefazo_User_1.4_27_2026-08-30_2051.aab
+```powershell
+indraq dns create api.example.com --type A --environment production --routing SIMPLE
 ```
 
-Rules:
+Failover example:
 
-- timezone: `Asia/Kolkata` (IST);
-- date: `YYYY-MM-DD`;
-- time: 24-hour `HHmm`;
-- seconds are intentionally omitted;
-- unsafe filename characters in the configured app name are replaced with `_`.
+```powershell
+indraq dns create api.example.com `
+  --type A `
+  --environment production `
+  --secondary-environment production-backup `
+  --routing FAILOVER
+```
+
+Health checks are especially important for failover designs because Route53 needs a reliable signal to decide whether a primary target is healthy.
 
 ---
 
-## How local source reaches Jenkins
+## J. Nginx Proxy Manager: proxy hosts and users
 
-This is the mobile source-upload design.
+### Proxy hosts
 
-The old mobile Jenkins pipeline cloned a Git URL. The new flow builds the files that are **actually on the developer's computer right now**.
+| Command | Usage / importance |
+| --- | --- |
+| `indraq proxy list` | List NPM proxy hosts. |
+| `indraq proxy create [domain]` | Create a reverse proxy, with optional certificate/SSL/WebSocket settings. |
+| `indraq proxy update [domain]` | Update an existing proxy host. |
+| `indraq proxy delete [domain]` | Delete a proxy host after confirmation. |
 
-```mermaid
-flowchart TD
-    A[Developer runs indraq build mobile:prod] --> B[Verify current directory is project root]
-    B --> C[Validate Expo / React Native project]
-    C --> D[Create clean temporary source snapshot]
-    D --> E[Calculate SHA-256]
-    E --> F[Upload snapshot to Jenkins]
-    F --> G[Jenkins verifies SHA-256]
-    G --> H[Extract source]
-    H --> I[Build Android]
-    I --> J[Archive APK / AAB]
-    J --> K[Stream logs + artifact URL to terminal]
-```
-
-### What is excluded from the source snapshot?
-
-IndraQ excludes common generated/sensitive files such as:
+Common proxy options include:
 
 ```text
-.git/
-.indraq/
-node_modules/
-coverage/
-dist/
-build/
-.vscode/
-.idea/
-.env
-.env.*
-*.apk
-*.aab
-android/.gradle/
-android/app/build/
-ios/Pods/
+--forward-host <host>
+--environment <name>
+--forward-port <port>
+--scheme http|https
+--certificate-id <id>
+--request-ssl
+--email <email>
+--force-ssl
+--http2
+--websocket / --no-websocket
 ```
 
-The source archive is created in the system temporary directory, uploaded, then deleted locally.
+Example:
 
-### Why SHA-256?
+```powershell
+indraq proxy create api.example.com --environment production --forward-port 5000 --request-ssl --force-ssl --http2
+```
 
-The CLI calculates a SHA-256 hash before upload. Jenkins calculates it again before extraction.
+### NPM users
 
-If they do not match, the build stops.
+| Command | Usage / importance |
+| --- | --- |
+| `indraq npm-user list` | List Nginx Proxy Manager users. |
+| `indraq npm-user create` | Create an NPM user directly. |
+| `indraq npm-user update [identity]` | Update name, nickname, email, password, role or disabled state. |
+| `indraq npm-user delete [identity]` | Delete an NPM user directly. |
+
+For organization-wide lifecycle changes, prefer `indraq user create/update/delete` so Cloud, AWS, NPM and Jenkins stay synchronized.
 
 ---
 
-## Root .env behavior
+## K. Mobile builds
 
-You no longer paste `.env` into Jenkins.
+Mobile build shortcuts are grouped under `indraq build`.
 
-For build outputs that need an environment file, IndraQ automatically uses:
+| Command | Usage / importance |
+| --- | --- |
+| `indraq build mobile:dev` | Build the mobile development environment. |
+| `indraq build mobile:development` | Alias of `mobile:dev`. |
+| `indraq build mobile:staging` | Build the mobile staging environment. |
+| `indraq build mobile:prod` | Build the mobile production environment. |
+| `indraq build mobile:production` | Alias of `mobile:prod`. |
 
-```text
-<mobile-project-root>/.env
-```
-
-The `.env` file is:
-
-1. **not included** inside the source archive;
-2. uploaded separately as a Jenkins file parameter;
-3. copied into the temporary build source;
-4. never printed in logs;
-5. removed from the Jenkins workspace in `post { always { ... } }`.
-
-> [!CAUTION]
-> Jenkins file parameters can remain in Jenkins build data according to your controller/plugin retention behavior. The workspace copy is deleted, but highly sensitive production secrets should still follow your normal Jenkins retention and secret-management policy.
-
-If a required `.env` is missing, the build stops before source upload.
-
-Expo Development Client does not require `.env`, but if a root `.env` exists IndraQ still supplies it automatically.
-
----
-
-## Mobile Jenkins setup
-
-The mobile source-upload workflow requires the Jenkins **File Parameter** plugin.
-
-### Step 1 — install the plugin
-
-In Jenkins:
+Useful per-build overrides:
 
 ```text
-Manage Jenkins
-  → Plugins
-  → Available plugins
-  → search: File Parameter
-  → install "File Parameter"
-```
-
-Plugin ID:
-
-```text
-file-parameters
-```
-
-### Step 2 — use the IndraQ v1.5 mobile Jenkinsfile
-
-This repository includes:
-
-```text
-templates/jenkins/Jenkinsfile-Mobile-App
-```
-
-Use that pipeline for the Jenkins mobile build job.
-
-It declares two large file parameters:
-
-```text
-SOURCE_BUNDLE
-ENV_FILE
-```
-
-plus normal metadata/build parameters supplied automatically by the CLI.
-
-> [!IMPORTANT]
-> If you replace an existing Pipeline Jenkinsfile with this one, run/save the job once if Jenkins needs an initial run to register the new parameter definitions. After that the CLI uses `buildWithParameters` automatically.
-
-### Step 3 — Jenkins agent paths
-
-Default paths in the template:
-
-```text
-ANDROID_HOME=/opt/android-sdk
-ANDROID_SDK_ROOT=/opt/android-sdk
-MOBILE_BUILDER_HOME=/opt/mobile-builder
-```
-
-Change the Jenkinsfile if your Jenkins agent uses different paths.
-
-### Step 4 — configure the CLI
-
-```bash
-indraq configure
-```
-
-Configure the Jenkins connection once:
-
-```text
-Jenkins
-  → Production
-```
-
-Enter the Production Jenkins URL, username, and API token. **All mobile Development, Staging, and Production builds use this Production Jenkins connection.**
-
-Then configure the mobile project:
-
-```text
-Mobile App
-  → Project settings
-```
-
-Set the app name and project type. On Jenkins, create/rename the mobile Pipeline job to exactly:
-
-```text
-Mobile app Cli build
-```
-
-The CLI checks this exact job on Production Jenkins before every mobile build.
-
-### Live logs
-
-Mobile source upload is triggered through Jenkins HTTP `buildWithParameters`, then IndraQ follows the queue item, discovers the build number, and streams Jenkins **`logText/progressiveHtml`** into VS Code. This is the same progressive console endpoint used by the classic Jenkins browser console, so Jenkins' hidden `ConsoleNote` metadata is rendered/removed before IndraQ converts the remaining HTML to readable terminal text.
-
-If Jenkins fails, the CLI exits with failure, prints a short **Key Jenkins error lines** summary, and prints the direct Jenkins build URL. The complete live output remains above it.
-
----
-
-## Configuration and secret storage
-
-Project-local configuration:
-
-```text
-<project>/.indraq/
-├── jenkins.json          # shared — commit
-├── docker.json           # shared — commit
-├── mobile.json           # shared — commit
-├── jenkins.local.json    # machine-local — ignored
-└── .gitignore
-```
-
-The generated `.indraq/.gitignore` ignores **only machine-local files** such as `jenkins.local.json`. Shared project configuration is intentionally visible to Git.
-
-> [!IMPORTANT]
-> v1.5.8 never adds `.indraq/` as an ignore-all rule. If a project already has a root `.gitignore`, IndraQ reuses that same file and adds `.indraq/jenkins.local.json` only when that exact rule is missing. Re-running `indraq configure` does not duplicate the entry. Known ignore-all rules created by older IndraQ versions are migrated while unrelated user ignore rules are preserved.
-
-### `jenkins.json`
-
-Stores non-secret Jenkins metadata:
-
-```text
-Development Jenkins connection
-Production Jenkins connection
-```
-
-Usage is fixed and easy to remember:
-
-```text
-Docker DEV  → Development Jenkins
-Docker PROD → Production Jenkins
-Mobile DEV / STAGING / PROD → Production Jenkins
-```
-
-It stores Jenkins URL/transport only. It does **not** store Jenkins username, token, or password.
-
-The local `jenkins.local.json` contains only the machine's credential binding ID and is ignored by Git. The actual username + API token/password remain under the user's home directory.
-
-### `docker.json`
-
-Stores:
-
-```text
-GitHub / GHCR owner
-Development image + Dockerfile
-Production image + Dockerfile
-```
-
-### `mobile.json`
-
-Stores:
-
-```text
-stable project ID
-app name
-project type
-Android Version + versionCode
-auto-increment switches for Version + versionCode
-Development output/profile
-Staging output/profile
-Production output/profile
-```
-
-It does **not** store `.env` values.
-
-### Jenkins secret location
-
-Jenkins login credentials live outside the repository and never survive a Git clone:
-
-```text
-~/.indraq/
-└── jenkins/
-    └── <server-account-id>/
-        ├── jenkins-cli.jar
-        └── auth
-```
-
-Never commit this directory.
-
----
-
-## Upgrade from v1.4 / v1.5
-
-Update the public package:
-
-```bash
-npm install -g indraq_cli@latest
-```
-
-Verify:
-
-```bash
-indraq --version
-```
-
-Expected for this release:
-
-```text
-1.5.3
-```
-
-v1.5.8 automatically migrates older `.indraq/mobile.json` and Jenkins config layouts. Existing mobile environment/version settings are preserved. Older Jenkins username/server binding fields are split so only non-secret server metadata remains in tracked `jenkins.json`; the current machine binding is written to ignored `jenkins.local.json`.
-
-For projects coming from pre-versioning releases, Android version settings initialize as:
-
-```text
-Version:     0.1
-versionCode: 1
-Auto Version: ON
-Auto versionCode: ON
-```
-
-Because v1.5 did not store the configured app name, open:
-
-```text
-indraq configure
-  → Mobile App
-  → Project settings
-```
-
-and confirm the app name once.
-
-Docker/GHCR and Jenkins configuration remain compatible.
-
----
-
-## Command reference
-
-The CLI now has a complete built-in help system, so developers do not need to open this README just to remember syntax.
-
-```bash
-indraq --help
-indraq help
-indraq help configure
-indraq help docker
-indraq help mobile
-indraq help doctor
-```
-
-### Core commands
-
-| Command | Purpose |
-|---|---|
-| `indraq --version` | Show installed CLI version |
-| `indraq --help` | Show the complete command catalog, aliases, flags, mappings and examples |
-| `indraq help` | Same complete command catalog |
-| `indraq help <topic>` | Focused help for `configure`, `docker`, `mobile`, or `doctor` |
-| `indraq doctor` | Diagnose runtime / PATH prerequisites |
-| `indraq configure` | Open configuration home |
-
-### Docker commands
-
-| Command | Purpose |
-|---|---|
-| `indraq deploy:dev` | Docker Development build/push/deploy |
-| `indraq deploy:development` | Alias of `deploy:dev` |
-| `indraq deploy:prod` | Docker Production build/push/deploy |
-| `indraq deploy:production` | Alias of `deploy:prod` |
-| `indraq deploy build --env dev` | Long-form Development command |
-| `indraq deploy build --env development` | Long-form Development alias |
-| `indraq deploy build --env prod` | Long-form Production command |
-| `indraq deploy build --env production` | Long-form Production alias |
-| `indraq deploy configure` | Open configuration home |
-| `indraq deploy:configure` | Alias for `indraq configure` |
-
-### Mobile commands
-
-| Command | Purpose |
-|---|---|
-| `indraq build mobile:dev` | Mobile Development build |
-| `indraq build mobile:development` | Alias of `mobile:dev` |
-| `indraq build mobile:staging` | Mobile Staging build |
-| `indraq build mobile:prod` | Mobile Production build |
-| `indraq build mobile:production` | Alias of `mobile:prod` |
-
-Mobile flags:
-
-```text
---output <dev-client|development-client|client|debug|debug-apk|apk|release-apk|aab|release-aab>
---profile <fast|clean|full-reset>
+--output dev-client|debug-apk|apk|aab
+--profile fast|clean|full-reset
 --verbose
 --dry-run
--y, --yes
+--yes
 ```
 
-### Jenkins routing reminder
-
-```text
-Docker Development → Development Jenkins
-Docker Production  → Production Jenkins
-Mobile Development → Production Jenkins
-Mobile Staging     → Production Jenkins
-Mobile Production  → Production Jenkins
-```
-
----
-
-## Troubleshooting
-
-### `Java is required for Jenkins CLI`
-
-Check:
-
-```bash
-java -version
-```
-
-Install Java 21 and reopen VS Code.
-
----
-
-### `tar is required`
-
-Check:
-
-```bash
-tar --version
-```
-
-Modern Windows 10/11, macOS, and most Linux distributions already provide `tar`.
-
-Ubuntu/Debian:
-
-```bash
-sudo apt install -y tar
-```
-
----
-
-### `You are not in a mobile project root`
-
-Run:
-
-```bash
-ls
-```
-
-or on PowerShell:
+Before a real upload/build, validate the plan when useful:
 
 ```powershell
-Get-ChildItem
+indraq build mobile:staging --dry-run
 ```
 
-The current directory must contain:
-
-```text
-package.json
-```
-
-For React Native CLI it must also contain:
-
-```text
-android/
-android/gradlew
-```
+Use `indraq configure` → **Mobile App settings** for the persistent mobile configuration.
 
 ---
 
-### `expo-dev-client is not installed`
+## L. Audit logs
 
-For Expo Development Client:
+| Command | Usage / importance |
+| --- | --- |
+| `indraq logs` | **Manager/admin:** view IndraQ audit activity. Supports search/limit/all filtering. |
 
-```bash
-npx expo install expo-dev-client
-```
-
-Then retry.
-
----
-
-### `.env was not found`
-
-Create:
-
-```text
-<project-root>/.env
-```
-
-Do not paste it into Jenkins.
-
----
-
-### Jenkins HTTP 400 / file parameter error
-
-Make sure:
-
-1. Jenkins **File Parameter** plugin is installed;
-2. the job uses `templates/jenkins/Jenkinsfile-Mobile-App` from v1.5.8;
-3. Jenkins has registered the parameters;
-4. the Jenkins job is named exactly `Mobile app Cli build`.
-
----
-
-### Jenkins job not found
-
-For mobile, the job name is fixed. In Jenkins, create or rename the Pipeline to exactly:
-
-```text
-Mobile app Cli build
-```
-
-Then make sure `indraq configure → Jenkins → Production` points at that Jenkins controller and that this computer has valid Jenkins credentials.
-
-For Docker, the Jenkins job name must match the configured image name.
-
----
-
-### `indraq` opens another Windows file/application
-
-Run:
+Example:
 
 ```powershell
-where.exe indraq
+indraq logs --search user.role --all
+```
+
+Audit logs are important when diagnosing who changed user roles, project access or infrastructure and why.
+
+---
+
+# Common real-world flows
+
+| Goal | Recommended commands |
+| --- | --- |
+| Add a developer | `user create` → `project add user` → `access add user` |
+| Promote/demote a person | `user update <name> --role manager|user` |
+| Remove a person permanently | `user delete <name>` |
+| Register an existing app | `project create` → `configure` → `prebuild` |
+| Connect a checked-out repo | `project link` → `project status` |
+| First web deployment | `prebuild --env <name>` → `deploy build --env <name>` |
+| Later web deployment | `deploy build --env <name>` |
+| Run an arbitrary Jenkins job | `jenkins pipelines` → `jenkins run` |
+| Remove only project/resource access | `project delete user` / `access delete user` |
+
+Use unified user commands for organization lifecycle changes. Direct AWS/NPM/Jenkins user commands are useful for provider-specific administration, but changing only one provider can intentionally create a state that differs from the IndraQ organization identity.
+
+---
+
+# Security model
+
+IndraQ automates privileged systems, so convenience must not come at the cost of uncontrolled credentials.
+
+| Area | Design |
+| --- | --- |
+| Cloud login | Authenticated session stored for the CLI rather than re-entering passwords for every command |
+| Provider credentials | Stored per IndraQ user in Cloud rather than in each project repository |
+| Encryption | Sensitive reusable provider secrets use the Cloud `MASTER_KEY` for encrypted-at-rest storage |
+| AWS managed keys | Secret access keys created through the managed workflow can be retained encrypted for authorized recovery/rotation |
+| Project access | VIEW/WRITE and resource grants control who can change project infrastructure |
+| Role updates | External linked providers are reconciled before the Cloud role is finalized |
+| User deletion | External cleanup happens before permanent Cloud identity deletion |
+| Auditing | Sensitive manager/admin actions require/record reasons where the API enforces them |
+
+Never commit `.env` files containing real secrets, AWS credentials, Jenkins tokens, NPM passwords or GHCR tokens to Git.
+
+Keep the Cloud `MASTER_KEY` stable. Changing or losing it after encrypted credentials are stored makes those existing encrypted values unreadable.
+
+---
+
+# Troubleshooting
+
+| Symptom | First checks |
+| --- | --- |
+| `indraq` is not found | Run `npm run build`, `npm link` (development), open a new terminal, then `indraq doctor` |
+| Provider credentials are missing | `indraq provider list`, then `indraq provider configure <provider>` |
+| Jenkins crumb/authorization error | Confirm the correct `--stage` and that the stored Jenkins account has enough permission for that operation |
+| Jenkins host port is busy | Choose another validated/suggested free host port before deployment creation |
+| `prebuild` cannot reconcile resources | Check `whoami` → `project status` → `provider list` → `environment list`, then rerun |
+| Unified deletion stops on a provider | Repair the genuine provider failure and retry; Cloud deletion is retained until external cleanup can complete |
+
+For command syntax, use `indraq <command> --help` rather than guessing flags.
+
+---
+
+# Platform operator: IndraQ Cloud API
+
+Most CLI users can skip this section. The team operating `api.indraq.com` should use `cloud-api/README.md` as the detailed server guide.
+
+The Cloud API requires Node.js 22+, PostgreSQL, a strong `JWT_SECRET`, a persistent 64-hex-character `MASTER_KEY`, bootstrap-admin credentials for first startup, and SMTP when email password reset is enabled.
+
+```powershell
+cd cloud-api
+npm install
+Copy-Item .env.example .env
+npm run build
+npm start
+```
+
+Numbered SQL migrations in `cloud-api/sql/` run automatically at API startup. Do not casually replace `MASTER_KEY`; existing encrypted provider secrets depend on it.
+
+More implementation detail:
+
+```text
+cloud-api/README.md
+docs/ARCHITECTURE.md
+```
+
+---
+
+# Before publishing a CLI release
+
+Run the complete verification sequence:
+
+```powershell
+npm install
+npm run build
+npm test
+npm pack --dry-run
+```
+
+Inspect `npm pack --dry-run` before publishing. The package should contain the files required at runtime and must not contain private `.env` files, tokens, credentials or unrelated development artifacts.
+
+Test the actual tarball when making a significant release:
+
+```powershell
+npm pack
+npm install -g .\indraq_cli-<version>.tgz
+indraq --version
 indraq doctor
+indraq --help
 ```
 
-The npm launcher should be the first `indraq` result.
-
----
-
-### npm shows `EEXIST` for `indraq.ps1`
-
-This usually means an old `npm link` launcher is still present.
-
-Remove the old global development link/package, then reinstall:
+Then publish only after the packaged build behaves correctly:
 
 ```powershell
-npm unlink -g indraq_cli
-npm uninstall -g indraq_cli
-npm install -g indraq_cli
+npm publish --dry-run
+npm publish
 ```
 
 ---
 
+# Where to go next
 
-### `./gradlew: cannot execute: required file not found`
+For day-to-day usage, these four commands cover most questions:
 
-This normally means the mobile source snapshot came from Windows and `android/gradlew` contains CRLF line endings. IndraQ normalizes the wrapper automatically on Jenkins before the build and invokes it through Bash.
-
-The Jenkins server provides the Android toolchain:
-
-```text
-Java                 → Jenkins server
-ANDROID_HOME          → /opt/android-sdk
-Android NDKs          → /opt/android-sdk/ndk/*
-Shared Gradle cache   → $HOME/.gradle (normally /var/jenkins_home/.gradle)
-Preferred Gradle      → exact cached wrapper distribution
-Server fallback       → installed Gradle when it is the same major version
-Final fallback        → project wrapper with 120-second download timeout
-```
-
-This restores the shared Gradle-cache behavior used by the earlier Git-checkout mobile pipeline. `FULL_RESET` deliberately preserves the server's `$HOME/.gradle` cache.
-
-### Gradle wrapper tries to download and times out
-
-v1.5.8 first checks the Jenkins server's shared wrapper cache. If the requested distribution is already cached, the wrapper uses it without internet access. If there is no exact cached wrapper but Jenkins has a system Gradle from the same major version, IndraQ reuses the server Gradle. Only when neither option exists does the project wrapper attempt a download, with `networkTimeout=120000` applied to the temporary Jenkins copy of `gradle-wrapper.properties`.
-
-If the Jenkins machine has neither a compatible installed Gradle nor the requested wrapper cached and it has no outbound access to Gradle distributions, install/cache the required Gradle version on that Jenkins machine once.
-
-### Jenkins logs contain `ha:////...`, look diagonal, or are unreadable in VS Code
-
-The `ha:////...` strings are Jenkins `ConsoleNote` annotations embedded in raw `progressiveText`. The Jenkins browser UI renders/hides those annotations. v1.5.8 now consumes Jenkins `logText/progressiveHtml`—the same progressive endpoint used by the classic web console—and converts the rendered output back to plain terminal text.
-
-The CLI also normalizes line endings and strips terminal control sequences. Upgrade to v1.5.8 or newer if you see raw `ha:////...` payloads or staircase/right-shifted output.
-
----
-
-## Frequently asked questions
-
-### Do I install IndraQ CLI in every project?
-
-No. Install globally once per computer:
-
-```bash
-npm install -g indraq_cli
-```
-
-Each project only gets its own `.indraq/` configuration.
-
-### Does the mobile build require me to push my latest code to Git first?
-
-No. The mobile builder snapshots the files currently on disk. Uncommitted changes are included.
-
-### Does Jenkins need access to my GitHub repository for mobile builds?
-
-Not for the v1.5 source-upload pipeline. The CLI sends the source snapshot directly.
-
-### Does Docker deployment still use GitHub/GHCR?
-
-Yes. Docker builds continue to push images to GHCR and then run the configured Jenkins deployment job.
-
-### Can Staging and Production have different mobile outputs?
-
-Yes. Example:
-
-```text
-Staging:    Release APK / FAST
-Production: Release AAB / CLEAN
-```
-
-### Can I build an APK once without changing my saved Production AAB default?
-
-Yes:
-
-```bash
-indraq build mobile:prod --output apk
-```
-
-The saved default remains unchanged.
-
-### Does IndraQ save `.env`?
-
-No. It reads the root `.env` at build time and uploads it separately when required.
-
-### When does Version/versionCode increment?
-
-After a **successful** Jenkins mobile build. The build uses the currently saved values first, then enabled counters advance for the next build. Failed/cancelled builds do not consume values.
-
-### Can I turn auto-increment off?
-
-Yes:
-
-```text
+```powershell
+indraq --help
 indraq configure
-  → Mobile App
-  → Version & versionCode
+indraq project status
+indraq prebuild
 ```
 
-Version and versionCode have separate switches. When either is OFF, the build continues but IndraQ prints a reminder warning.
+For deployments:
 
-### What timezone is used in APK/AAB filenames?
-
-Always `Asia/Kolkata` (IST), using `YYYY-MM-DD_HHmm`.
-
-### Which Jenkins does Mobile use?
-
-**Production Jenkins only.** This is intentional.
-
-```text
-mobile:dev     → Production Jenkins
-mobile:staging → Production Jenkins
-mobile:prod    → Production Jenkins
+```powershell
+indraq deploy build --env <environment>
 ```
 
-The mobile Development/Staging/Production selection controls the app build environment and allowed output. It does not select a Jenkins controller.
+For Jenkins automation:
 
-### Why can Docker use Development and Production Jenkins?
-
-Docker deployments represent infrastructure environments. `indraq deploy:dev` can deploy through Development Jenkins while `indraq deploy:prod` can use Production Jenkins. Mobile builds are build jobs rather than Docker environment deployments, so they always use the single Production Jenkins path.
-
----
-
-## Project architecture
-
-```text
-src/
-├── cli/
-│   ├── create-program.ts
-│   └── doctor.command.ts
-│
-├── modules/
-│   ├── configure/
-│   │   └── configure.command.ts
-│   │
-│   ├── deploy/
-│   │   ├── commands/
-│   │   ├── config/
-│   │   └── services/
-│   │
-│   └── mobile/
-│       ├── commands/
-│       │   ├── configure-mobile.command.ts
-│       │   └── build-mobile.command.ts
-│       ├── config/
-│       │   └── mobile-config.ts
-│       └── services/
-│           ├── project.service.ts
-│           ├── source-bundle.service.ts
-│           └── jenkins-mobile.service.ts
-│
-└── shared/
-    ├── config/
-    ├── git/
-    ├── github/
-    ├── jenkins/
-    └── runtime/
-
-templates/
-└── jenkins/
-    └── Jenkinsfile-Mobile-App
+```powershell
+indraq jenkins pipelines
+indraq jenkins run
 ```
 
-This is intentional. Future modules can be added without dumping unrelated logic into the deployment module.
+For exact flags on anything:
 
-Possible future commands:
-
-```text
-indraq database ...
-indraq backup ...
-indraq server ...
-indraq secrets ...
-indraq diagnostics ...
+```powershell
+indraq <command> --help
 ```
 
 ---
 
-## Final checklist
+# License
 
-### Developer machine
-
-- [ ] Node.js 22+ installed
-- [ ] npm installed
-- [ ] Java available with `java -version`
-- [ ] Git installed
-- [ ] `tar` available
-- [ ] Docker installed if using Docker deployment
-- [ ] `npm install -g indraq_cli` completed
-- [ ] `indraq doctor` passes
-
-### Docker deployment project
-
-- [ ] `indraq configure → Jenkins → Development/Production`
-- [ ] `indraq configure → Docker / GHCR`
-- [ ] Dockerfile exists
-- [ ] GitHub/GHCR authentication works
-- [ ] Jenkins deployment job names match image names
-
-### Mobile project
-
-- [ ] command is run from package.json root
-- [ ] Production Jenkins connection configured (`indraq configure → Jenkins → Production`)
-- [ ] Jenkins File Parameter plugin installed
-- [ ] Jenkins job uses the v1.5.8 mobile Jenkinsfile
-- [ ] Mobile project type configured
-- [ ] Jenkins job is named exactly `Mobile app Cli build` and exists on Production Jenkins
-- [ ] Development / Staging / Production defaults configured as needed
-- [ ] root `.env` exists for APK/AAB/debug builds
-- [ ] Expo Development Client has `expo-dev-client`
-- [ ] `.indraq/mobile.json` is not ignored and is committed so Version/versionCode survive across developers
-
----
-
-## License
-
-MIT License. See [`LICENSE`](LICENSE).
-
-<p align="center">
-  <img src="docs/assets/indraq-mark.png" alt="IndraQ" width="72" />
-</p>
-
-<p align="center">
-  <strong>Built and maintained by IndraQ Innovations.</strong>
-</p>
-
-
-### Jenkins mobile upload returns HTTP 403
-
-IndraQ CLI v1.5.8 preserves the Jenkins web-session cookie together with the CSRF crumb when a Jenkins username/password is used. Jenkins ties crumbs to the session that created them, so both values must travel together. API-token authentication is exempt from the crumb requirement.
-
-If a mobile build still returns HTTP 403, v1.5.8 prints Jenkins' own response message. A permission error means the configured Jenkins user needs **Job/Read** and **Job/Build** on the `Mobile app Cli build` job. A CSRF error means the Jenkins controller or reverse proxy is rejecting the crumb/session and the printed Jenkins message should be used for diagnosis.
+MIT © IndraQ Innovations
